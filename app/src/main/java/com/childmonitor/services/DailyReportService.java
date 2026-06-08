@@ -9,11 +9,8 @@ import android.os.IBinder;
 
 import androidx.annotation.Nullable;
 
-import com.google.firebase.database.DataSnapshot;
-import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
-import com.google.firebase.database.ValueEventListener;
 
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
@@ -29,31 +26,25 @@ public class DailyReportService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-
         deviceId = getSharedPreferences("cm_prefs", MODE_PRIVATE)
                 .getString("device_id", "unknown");
-
         scheduleDailyReport();
     }
 
     private void scheduleDailyReport() {
         AlarmManager alarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
-
         Intent intent = new Intent(this, DailyReportService.class);
         intent.setAction("GENERATE_REPORT");
         PendingIntent pendingIntent = PendingIntent.getService(
                 this, 0, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-
         Calendar calendar = Calendar.getInstance();
         calendar.set(Calendar.HOUR_OF_DAY, 23);
         calendar.set(Calendar.MINUTE, 0);
         calendar.set(Calendar.SECOND, 0);
-
         if (calendar.getTimeInMillis() < System.currentTimeMillis()) {
             calendar.add(Calendar.DAY_OF_MONTH, 1);
         }
-
         if (alarmManager != null) {
             alarmManager.setRepeating(
                 AlarmManager.RTC_WAKEUP,
@@ -74,44 +65,30 @@ public class DailyReportService extends Service {
     private void generateDailyReport() {
         String today = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
                 .format(new Date());
-
         DatabaseReference deviceRef = FirebaseDatabase.getInstance()
                 .getReference("devices")
                 .child(deviceId);
+        Map<String, Object> report = new HashMap<>();
+        report.put("date", today);
+        report.put("generated_at", System.currentTimeMillis());
+        report.put("status", "generated");
+        deviceRef.child("daily_reports").child(today).setValue(report);
+        sendReportNotification(today);
+    }
 
-        deviceRef.child("app_usage").child("daily").child(today)
-                .addListenerForSingleValueEvent(new ValueEventListener() {
-                    @Override
-                    public void onDataChange(DataSnapshot usageSnapshot) {
-                        deviceRef.child("location").child("history")
-                                .addListenerForSingleValueEvent(new ValueEventListener() {
-                                    @Override
-                                    public void onDataChange(DataSnapshot locationSnapshot) {
-                                        Map<String, Object> report = new HashMap<>();
-                                        report.put("date", today);
-                                        report.put("generated_at", System.currentTimeMillis());
+    private void sendReportNotification(String date) {
+        Map<String, Object> notification = new HashMap<>();
+        notification.put("type", "daily_report");
+        notification.put("date", date);
+        notification.put("timestamp", System.currentTimeMillis());
+        FirebaseDatabase.getInstance()
+                .getReference("notifications")
+                .child(deviceId)
+                .push()
+                .setValue(notification);
+    }
 
-                                        Map<String, Object> appSummary = new HashMap<>();
-                                        if (usageSnapshot.exists()) {
-                                            int totalApps = (int) usageSnapshot.getChildrenCount();
-                                            appSummary.put("total_apps_used", totalApps);
-                                            long totalMinutes = 0;
-                                            for (DataSnapshot app : usageSnapshot.getChildren()) {
-                                                Long mins = app.child("usage_minutes")
-                                                        .getValue(Long.class);
-                                                if (mins != null) totalMinutes += mins;
-                                            }
-                                            appSummary.put("total_screen_time_minutes", totalMinutes);
-                                        }
-                                        report.put("app_usage", appSummary);
-                                        report.put("location_points_logged",
-                                                locationSnapshot.getChildrenCount());
-
-                                        deviceRef.child("daily_reports")
-                                                .child(today)
-                                                .setValue(report);
-
-                                        sendReportNotification(today);
-                                    }
-
-                                    @Override
+    @Nullable
+    @Override
+    public IBinder onBind(Intent intent) { return null; }
+}
